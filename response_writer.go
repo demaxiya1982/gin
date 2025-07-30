@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"reflect"
 )
 
 const (
@@ -78,12 +79,42 @@ func (w *responseWriter) WriteHeaderNow() {
 	}
 }
 
+//func (w *responseWriter) Write(data []byte) (n int, err error) {
+//	w.WriteHeaderNow()
+//	n, err = w.ResponseWriter.Write(data)
+//	w.size += n
+//	return
+//}
+type safeWriter struct {
+	http.ResponseWriter
+}
+
+//修复异常问题
+func (w *safeWriter) Write(data []byte) (int, error) {
+	const endMarkerSize = 5
+	// 使用反射检查底层字段
+	respValue := reflect.ValueOf(w.ResponseWriter)
+	if respValue.Kind() == reflect.Ptr {
+		// 查找名为"w"的字段（http.response中的bufio.Writer）
+		wField := respValue.Elem().FieldByName("w")
+		if wField.IsValid() && wField.CanInterface() {
+			if buf, ok := wField.Interface().(*bufio.Writer); ok {
+				if buf.Available() < endMarkerSize {
+					buf.Flush()
+				}
+			}
+		}
+	}
+
+	return w.ResponseWriter.Write(data)
+}
+
 func (w *responseWriter) Write(data []byte) (n int, err error) {
 	w.WriteHeaderNow()
-	n, err = w.ResponseWriter.Write(data)
-	w.size += n
-	return
+	sw := &safeWriter{ResponseWriter: w.ResponseWriter}
+	return sw.Write(data)
 }
+
 
 func (w *responseWriter) WriteString(s string) (n int, err error) {
 	w.WriteHeaderNow()
